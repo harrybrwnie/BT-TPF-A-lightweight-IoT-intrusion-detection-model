@@ -47,8 +47,6 @@ class MixModule(nn.Module):
         replacement_rate: float = 0.5
     ):
         super(MixModule, self).__init__()
-        successor.patch_embed.weight.data.copy_(predecessor.patch_embed.projection.weight.data)
-        successor.patch_embed.bias.data.copy_(predecessor.patch_embed.projection.bias.data)
         self.predecessor_module = predecessor_module
         self.successor_module = successor_module
         self.replacement_rate = replacement_rate
@@ -283,10 +281,12 @@ class MixModel(nn.Module):
         self.num_modules = len(predecessor.modules_list)
         self.use_optimization = use_optimization
         
-        # Freeze Predecessor parameters
+        ''' Freeze Predecessor parameters
         for param in predecessor.parameters():
             param.requires_grad = False
-        
+        '''
+        successor.patch_embed.weight.data.copy_(predecessor.patch_embed.projection.weight.data)
+        successor.patch_embed.bias.data.copy_(predecessor.patch_embed.projection.bias.data)
         # Create Mix modules
         if use_optimization:
             self.mix_modules = nn.ModuleList([
