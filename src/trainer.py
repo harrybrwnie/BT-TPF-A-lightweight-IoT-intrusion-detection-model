@@ -291,7 +291,7 @@ class BTPTFTrainer:
             embed_dim=self.config.successor.embed_dim,
             num_modules=self.config.successor.num_modules,
             blocks_per_module=self.config.successor.blocks_per_module,
-            mlp_ratio=self.config.successor.mlp_ratio,
+            mlp_hidden_dim=self.config.successor.mlp_hidden_dim,  # 1 neuron as per paper
             num_classes=num_classes,
             dropout=self.config.successor.dropout
         )

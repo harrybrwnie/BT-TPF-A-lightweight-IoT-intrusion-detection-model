@@ -47,7 +47,8 @@ class MixModule(nn.Module):
         replacement_rate: float = 0.5
     ):
         super(MixModule, self).__init__()
-        
+        successor.patch_embed.weight.data.copy_(predecessor.patch_embed.projection.weight.data)
+        successor.patch_embed.bias.data.copy_(predecessor.patch_embed.projection.bias.data)
         self.predecessor_module = predecessor_module
         self.successor_module = successor_module
         self.replacement_rate = replacement_rate
@@ -140,6 +141,10 @@ class OptimizedMixModule(nn.Module):
         
         Implements Equations 11-12 from the paper.
         
+        IMPORTANT FIX: The paper's equations assume outputs and labels are in the same space.
+        However, intermediate module outputs have shape [B, Seq, Embed] while labels are [B].
+        We must reduce scc and prd to scalar representations per sample before comparison.
+        
         Equation 11: ∂L/∂θ^s_i = 2[(scc_i(y_i) - prd_i(y_i))r²_{i+1} + 
                      (prd_i(y_i) - 2scc_i(y_i) + y_label)r_{i+1} + 
                      scc_i(y_i) - y_label] * ∂scc_i(y_i)/∂θ^s_i
@@ -150,30 +155,38 @@ class OptimizedMixModule(nn.Module):
              (2(scc_i(y_i) - prd_i(y_i)))                   if |scc_i(y_i) - y_label| < |Γ|
         
         Args:
-            scc_output: Successor module output
-            prd_output: Predecessor module output
-            y_label: Target label
+            scc_output: Successor module output [B, Seq, Embed]
+            prd_output: Predecessor module output [B, Seq, Embed]
+            y_label: Target label [B]
             
         Returns:
             Optimal replacement rate
         """
-        # Flatten tensors for computation
-        scc = scc_output.flatten()
-        prd = prd_output.flatten()
-        
-        if y_label.dim() > 1:
-            y = y_label.flatten()
+        # FIX: Reduce 3D tensors to 1D (per-sample scalar) using Global Average Pooling
+        # scc_output shape: [Batch, Seq_len, Embed_dim] -> [Batch]
+        # prd_output shape: [Batch, Seq_len, Embed_dim] -> [Batch]
+        if scc_output.dim() == 3:
+            scc_mean = scc_output.mean(dim=(1, 2))  # [Batch]
+            prd_mean = prd_output.mean(dim=(1, 2))  # [Batch]
+        elif scc_output.dim() == 2:
+            scc_mean = scc_output.mean(dim=1)  # [Batch]
+            prd_mean = prd_output.mean(dim=1)  # [Batch]
         else:
-            y = y_label
+            scc_mean = scc_output.flatten()
+            prd_mean = prd_output.flatten()
         
+        # y_label is [Batch] containing class indices
+        y = y_label.float()
+        
+        # Now all tensors are 1D [Batch], can perform element-wise operations
         # Compute |scc_i(y_i) - y_label|
-        scc_minus_label = (scc - y.float()).abs().mean().item()
+        scc_minus_label = (scc_mean - y).abs().mean().item()
         
         # Compute coefficients for quadratic equation
         # a = (scc - prd)
         # b = (prd - 2*scc + y_label)
-        a = (scc - prd).mean().item()
-        b = (prd - 2 * scc + y.float()).mean().item()
+        a = (scc_mean - prd_mean).mean().item()
+        b = (prd_mean - 2 * scc_mean + y).mean().item()
         
         # Avoid division by zero
         if abs(a) < 1e-8:
@@ -383,6 +396,9 @@ class BERTOfTheseus:
         self.initial_replacement_rate = initial_replacement_rate
         self.use_optimization = use_optimization
         
+        # Get number of classes from classifier
+        self.num_classes = successor.classifier.out_features
+        
         # Create Mix model
         self.mix_model = MixModel(
             predecessor,
@@ -391,8 +407,25 @@ class BERTOfTheseus:
             use_optimization
         ).to(device)
         
-        # Loss function: MSE (Equation 7)
-        self.criterion = nn.CrossEntropyLoss()
+        # Loss function: MSE (Equation 7) as per paper Section 3.2
+        # Paper states: "In the replacement training process, this paper utilizes 
+        # the Mean Squared Error (MSE) loss function, as shown in Eq. (7):
+        # L = mean[(y - label)²]"
+        self.criterion = nn.MSELoss()
+    
+    def _to_onehot(self, target: torch.Tensor) -> torch.Tensor:
+        """
+        Convert class indices to one-hot encoding for MSE loss.
+        
+        Required because MSE loss needs targets with same shape as outputs.
+        
+        Args:
+            target: Class indices tensor [Batch]
+            
+        Returns:
+            One-hot encoded tensor [Batch, num_classes]
+        """
+        return F.one_hot(target, num_classes=self.num_classes).float()
         
     def pre_train_predecessor(
         self,
@@ -424,7 +457,9 @@ class BERTOfTheseus:
                 
                 optimizer.zero_grad()
                 output = self.predecessor(data)
-                loss = self.criterion(output, target)
+                # Convert target to one-hot for MSE loss (Equation 7)
+                target_onehot = self._to_onehot(target)
+                loss = self.criterion(output, target_onehot)
                 loss.backward()
                 optimizer.step()
                 
@@ -468,7 +503,9 @@ class BERTOfTheseus:
                 
                 optimizer.zero_grad()
                 output = self.successor(data)
-                loss = self.criterion(output, target)
+                # Convert target to one-hot for MSE loss (Equation 7)
+                target_onehot = self._to_onehot(target)
+                loss = self.criterion(output, target_onehot)
                 loss.backward()
                 optimizer.step()
                 
@@ -539,7 +576,9 @@ class BERTOfTheseus:
                 else:
                     output = self.mix_model(data)
                 
-                loss = self.criterion(output, target)
+                # Convert target to one-hot for MSE loss (Equation 7)
+                target_onehot = self._to_onehot(target)
+                loss = self.criterion(output, target_onehot)
                 loss.backward()
                 optimizer.step()
                 
@@ -599,7 +638,9 @@ class BERTOfTheseus:
                 
                 optimizer.zero_grad()
                 output = self.successor(data)
-                loss = self.criterion(output, target)
+                # Convert target to one-hot for MSE loss (Equation 7)
+                target_onehot = self._to_onehot(target)
+                loss = self.criterion(output, target_onehot)
                 loss.backward()
                 optimizer.step()
                 
@@ -615,7 +656,9 @@ class BERTOfTheseus:
                 for data, target in val_loader:
                     data, target = data.to(self.device), target.to(self.device)
                     output = self.successor(data)
-                    loss = self.criterion(output, target)
+                    # Convert target to one-hot for MSE loss (Equation 7)
+                    target_onehot = self._to_onehot(target)
+                    loss = self.criterion(output, target_onehot)
                     val_loss += loss.item()
             
             val_loss /= len(val_loader)

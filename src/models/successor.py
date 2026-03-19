@@ -90,21 +90,19 @@ class SuccessorMLP(nn.Module):
     
     Args:
         embed_dim: Embedding dimension
-        mlp_ratio: Ratio for hidden dimension (default: 1 for minimal params)
+        hidden_dim: Hidden layer neurons (default: 1 as per paper for minimal params)
         dropout: Dropout rate
     """
     
     def __init__(
         self,
         embed_dim: int,
-        mlp_ratio: int = 1,
+        hidden_dim: int = 1,  # Paper says exactly 1 neuron for minimal parameters
         dropout: float = 0.1
     ):
         super(SuccessorMLP, self).__init__()
         
-        # Hidden dimension is 1 (minimal) as per paper
-        hidden_dim = max(1, embed_dim * mlp_ratio // embed_dim)
-        
+        # Hidden dimension is 1 (minimal) as per paper Section 5.2
         self.fc1 = nn.Linear(embed_dim, hidden_dim)
         self.act = nn.Tanh()  # Tanh activation as per paper
         self.fc2 = nn.Linear(hidden_dim, embed_dim)
@@ -144,7 +142,7 @@ class PoolFormerBlock(nn.Module):
     
     Args:
         embed_dim: Embedding dimension
-        mlp_ratio: MLP hidden dimension ratio (default: 1 for minimal params)
+        mlp_hidden_dim: MLP hidden dimension (default: 1 for minimal params as per paper)
         dropout: Dropout rate
         pool_size: Size of pooling window
     """
@@ -152,7 +150,7 @@ class PoolFormerBlock(nn.Module):
     def __init__(
         self,
         embed_dim: int,
-        mlp_ratio: int = 1,
+        mlp_hidden_dim: int = 1,  # Paper says 1 neuron for Successor
         dropout: float = 0.1,
         pool_size: int = 3
     ):
@@ -166,8 +164,8 @@ class PoolFormerBlock(nn.Module):
         # No trainable parameters!
         self.pool = PoolingLayer(pool_size)
         
-        # MLP with minimal hidden dimension
-        self.mlp = SuccessorMLP(embed_dim, mlp_ratio, dropout)
+        # MLP with minimal hidden dimension (1 neuron as per paper)
+        self.mlp = SuccessorMLP(embed_dim, mlp_hidden_dim, dropout)
         
         # Dropout
         self.dropout = nn.Dropout(dropout)
@@ -201,7 +199,7 @@ class SuccessorModule(nn.Module):
     Args:
         embed_dim: Embedding dimension
         num_blocks: Number of PoolFormer blocks in this module (default: 1)
-        mlp_ratio: MLP hidden dimension ratio
+        mlp_hidden_dim: MLP hidden dimension (default: 1 as per paper)
         dropout: Dropout rate
     """
     
@@ -209,13 +207,13 @@ class SuccessorModule(nn.Module):
         self,
         embed_dim: int,
         num_blocks: int = 1,
-        mlp_ratio: int = 1,
+        mlp_hidden_dim: int = 1,  # Paper says 1 neuron for Successor
         dropout: float = 0.1
     ):
         super(SuccessorModule, self).__init__()
         
         self.blocks = nn.ModuleList([
-            PoolFormerBlock(embed_dim, mlp_ratio, dropout)
+            PoolFormerBlock(embed_dim, mlp_hidden_dim, dropout)
             for _ in range(num_blocks)
         ])
     
@@ -247,7 +245,7 @@ class Successor(nn.Module):
         embed_dim: Embedding dimension (default: 8)
         num_modules: Number of modules (default: 3)
         blocks_per_module: PoolFormer blocks per module (default: 1)
-        mlp_ratio: MLP hidden dimension ratio (default: 1)
+        mlp_hidden_dim: MLP hidden dimension (default: 1 as per paper)
         num_classes: Number of output classes
         dropout: Dropout rate (default: 0.1)
     """
@@ -259,7 +257,7 @@ class Successor(nn.Module):
         embed_dim: int = 8,
         num_modules: int = 3,
         blocks_per_module: int = 1,
-        mlp_ratio: int = 1,
+        mlp_hidden_dim: int = 1,  # Paper says 1 neuron for Successor MLP
         num_classes: int = 5,
         dropout: float = 0.1
     ):
@@ -286,11 +284,12 @@ class Successor(nn.Module):
         nn.init.trunc_normal_(self.pos_embed, std=0.02)
         
         # Successor Modules (3 modules, each with 1 PoolFormer block)
+        # MLP hidden dim = 1 as per paper Section 5.2
         self.modules_list = nn.ModuleList([
             SuccessorModule(
                 embed_dim=embed_dim,
                 num_blocks=blocks_per_module,
-                mlp_ratio=mlp_ratio,
+                mlp_hidden_dim=mlp_hidden_dim,  # 1 neuron
                 dropout=dropout
             )
             for _ in range(num_modules)

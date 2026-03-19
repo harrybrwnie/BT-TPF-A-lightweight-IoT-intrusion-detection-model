@@ -63,7 +63,9 @@ class ContrastiveLoss(nn.Module):
         # L = (1/2N) * Σ[y*d² + (1-y)*max(margin-d, 0)²]
         # When y=1 (same class): loss = d² (minimize distance)
         # When y=0 (different class): loss = max(margin-d, 0)² (maximize distance up to margin)
-        loss = torch.mean(
+        
+        # Note: torch.mean() computes (1/N) * Σ[...], so we multiply by 0.5 for the (1/2N) factor
+        loss = 0.5 * torch.mean(
             y * torch.pow(euclidean_distance, 2) +
             (1 - y) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2)
         )

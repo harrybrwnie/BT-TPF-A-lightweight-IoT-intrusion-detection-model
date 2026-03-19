@@ -212,24 +212,25 @@ class MLP(nn.Module):
     """
     MLP block for Transformer Encoder.
     
-    As per paper: "the number of neurons in the MLP block middle layer 
+    As per paper (Section 5.2): "the number of neurons in the MLP block middle layer 
     is set to 4 times the length of the token sequence (patches)"
+    
+    For 6×6 input with patch_size=2, stride=2: num_patches = (6/2)² = 9
+    So hidden_dim = 4 × 9 = 36
     
     Args:
         embed_dim: Embedding dimension
-        mlp_ratio: Ratio for hidden dimension (default: 4)
+        hidden_dim: Hidden dimension (should be 4 × num_patches, NOT 4 × embed_dim)
         dropout: Dropout rate
     """
     
     def __init__(
         self,
         embed_dim: int,
-        mlp_ratio: int = 4,
+        hidden_dim: int = 36,  # 4 × num_patches = 4 × 9 = 36 as per paper
         dropout: float = 0.1
     ):
         super(MLP, self).__init__()
-        
-        hidden_dim = embed_dim * mlp_ratio
         
         self.fc1 = nn.Linear(embed_dim, hidden_dim)
         self.act = nn.Tanh()  # Tanh activation as per paper
@@ -271,7 +272,7 @@ class TransformerEncoderBlock(nn.Module):
     Args:
         embed_dim: Embedding dimension
         num_heads: Number of attention heads
-        mlp_ratio: MLP hidden dimension ratio
+        mlp_hidden_dim: MLP hidden dimension (4 × num_patches as per paper)
         dropout: Dropout rate
     """
     
@@ -279,7 +280,7 @@ class TransformerEncoderBlock(nn.Module):
         self,
         embed_dim: int,
         num_heads: int = 2,
-        mlp_ratio: int = 4,
+        mlp_hidden_dim: int = 36,  # 4 × num_patches = 4 × 9 = 36
         dropout: float = 0.1
     ):
         super(TransformerEncoderBlock, self).__init__()
@@ -291,8 +292,8 @@ class TransformerEncoderBlock(nn.Module):
         # Multi-Head Self-Attention
         self.attn = MultiHeadAttention(embed_dim, num_heads, dropout)
         
-        # MLP
-        self.mlp = MLP(embed_dim, mlp_ratio, dropout)
+        # MLP with hidden_dim = 4 × num_patches (NOT 4 × embed_dim)
+        self.mlp = MLP(embed_dim, mlp_hidden_dim, dropout)
         
         # Dropout
         self.dropout = nn.Dropout(dropout)
@@ -330,7 +331,7 @@ class PredecessorModule(nn.Module):
         embed_dim: Embedding dimension
         num_blocks: Number of Transformer blocks in this module (default: 3)
         num_heads: Number of attention heads
-        mlp_ratio: MLP hidden dimension ratio
+        mlp_hidden_dim: MLP hidden dimension (4 × num_patches = 36 as per paper)
         dropout: Dropout rate
     """
     
@@ -339,13 +340,13 @@ class PredecessorModule(nn.Module):
         embed_dim: int,
         num_blocks: int = 3,
         num_heads: int = 2,
-        mlp_ratio: int = 4,
+        mlp_hidden_dim: int = 36,  # 4 × num_patches = 4 × 9 = 36 (NOT 4 × embed_dim!)
         dropout: float = 0.1
     ):
         super(PredecessorModule, self).__init__()
         
         self.blocks = nn.ModuleList([
-            TransformerEncoderBlock(embed_dim, num_heads, mlp_ratio, dropout)
+            TransformerEncoderBlock(embed_dim, num_heads, mlp_hidden_dim, dropout)
             for _ in range(num_blocks)
         ])
     
@@ -369,7 +370,7 @@ class Predecessor(nn.Module):
     Hyperparameters from Section 5.2:
     - Patch embedding: stride=2, kernel_size=2, num_kernels=8
     - Multi-Head Attention: num_heads=2
-    - MLP middle layer: 4× token sequence length
+    - MLP middle layer: 4× token sequence length (num_patches)
     
     Args:
         input_channels: Number of input channels (default: 1)
@@ -378,7 +379,7 @@ class Predecessor(nn.Module):
         num_modules: Number of modules (default: 3)
         blocks_per_module: Transformer blocks per module (default: 3)
         num_heads: Number of attention heads (default: 2)
-        mlp_ratio: MLP hidden dimension ratio (default: 4)
+        mlp_ratio: Ratio for MLP hidden dim calculation (default: 4)
         num_classes: Number of output classes
         dropout: Dropout rate (default: 0.1)
     """
@@ -412,6 +413,11 @@ class Predecessor(nn.Module):
         # For 6×6 input with patch_size=2, stride=2: (6/2) × (6/2) = 9 patches
         self.num_patches = (input_size // 2) ** 2
         
+        # MLP hidden dimension = 4 × num_patches (NOT 4 × embed_dim!)
+        # As per Section 5.2: "the number of neurons in the MLP block middle layer 
+        # is set to 4 times the length of the token sequence (patches)"
+        mlp_hidden_dim = mlp_ratio * self.num_patches  # 4 × 9 = 36
+        
         # Positional Encoding
         self.pos_encoding = PositionalEncoding(
             embed_dim=embed_dim,
@@ -425,7 +431,7 @@ class Predecessor(nn.Module):
                 embed_dim=embed_dim,
                 num_blocks=blocks_per_module,
                 num_heads=num_heads,
-                mlp_ratio=mlp_ratio,
+                mlp_hidden_dim=mlp_hidden_dim,  # 36, not 32!
                 dropout=dropout
             )
             for _ in range(num_modules)

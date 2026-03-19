@@ -47,7 +47,8 @@ class PredecessorConfig:
     
     From Section 5.2:
     - Number of heads in Multi-Head Attention: 2
-    - MLP middle layer neurons: 4× token sequence length
+    - MLP middle layer neurons: 4× token sequence length (num_patches)
+      For 6×6 input with patch_size=2: num_patches = 9, so MLP hidden = 4×9 = 36
     - 9 layers (3 modules × 3 blocks)
     """
     input_channels: int = 1
@@ -56,7 +57,7 @@ class PredecessorConfig:
     num_modules: int = 3
     blocks_per_module: int = 3  # Total 9 layers
     num_heads: int = 2
-    mlp_ratio: int = 4
+    mlp_ratio: int = 4  # MLP hidden = mlp_ratio × num_patches = 4 × 9 = 36
     dropout: float = 0.1
 
 
@@ -66,7 +67,7 @@ class SuccessorConfig:
     Configuration for Successor (PoolFormer-based) model.
     
     From Section 5.2:
-    - MLP middle layer neurons: 1 (minimal)
+    - MLP middle layer neurons: 1 (minimal for lightweight)
     - 3 layers (3 modules × 1 block)
     """
     input_channels: int = 1
@@ -74,7 +75,7 @@ class SuccessorConfig:
     embed_dim: int = 8
     num_modules: int = 3
     blocks_per_module: int = 1  # Total 3 layers
-    mlp_ratio: int = 1  # Minimal for lightweight
+    mlp_hidden_dim: int = 1  # Exactly 1 neuron as per paper Section 5.2
     dropout: float = 0.1
 
 
