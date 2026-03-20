@@ -13,7 +13,7 @@ Reference: Section 3.5 of Wang et al. (2024)
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 import numpy as np
 from typing import Dict, Tuple, Optional
 from tqdm import tqdm
@@ -60,6 +60,29 @@ class BTPTFTrainer:
         
         # Training history
         self.history = {}
+    
+    @staticmethod
+    def _build_weighted_sampler(labels: np.ndarray, power: float = 1.0) -> WeightedRandomSampler:
+        """
+        Build a WeightedRandomSampler with inverse-frequency class weights.
+        
+        Args:
+            labels: Class index labels for the training subset
+            power: Weight exponent. 1.0 means strict inverse-frequency.
+            
+        Returns:
+            WeightedRandomSampler for balanced mini-batches over epochs
+        """
+        class_counts = np.bincount(labels)
+        class_counts = np.maximum(class_counts, 1)
+        class_weights = 1.0 / np.power(class_counts, power)
+        sample_weights = class_weights[labels]
+        sample_weights = torch.from_numpy(sample_weights).float()
+        return WeightedRandomSampler(
+            weights=sample_weights,
+            num_samples=len(sample_weights),
+            replacement=True
+        )
     
     def prepare_data(
         self,
@@ -142,7 +165,11 @@ class BTPTFTrainer:
         )
         
         # Create dataset
-        dataset = SiamesePairDataset(train_features, train_labels)
+        dataset = SiamesePairDataset(
+            train_features,
+            train_labels,
+            balance_by_class=self.config.data.siamese_balance_by_class
+        )
         dataloader = DataLoader(
             dataset,
             batch_size=self.config.training.batch_size,
@@ -251,11 +278,25 @@ class BTPTFTrainer:
             train_dataset, [train_size, val_size]
         )
         
-        train_loader = DataLoader(
-            train_subset,
-            batch_size=self.config.training.batch_size,
-            shuffle=True
-        )
+        if self.config.training.use_weighted_sampler:
+            # Use subset labels (NOT full train labels) to avoid leakage/misalignment.
+            train_subset_indices = np.array(train_subset.indices)
+            train_subset_labels = train_labels[train_subset_indices]
+            sampler = self._build_weighted_sampler(
+                labels=train_subset_labels,
+                power=self.config.training.weighted_sampler_power
+            )
+            train_loader = DataLoader(
+                train_subset,
+                batch_size=self.config.training.batch_size,
+                sampler=sampler
+            )
+        else:
+            train_loader = DataLoader(
+                train_subset,
+                batch_size=self.config.training.batch_size,
+                shuffle=True
+            )
         val_loader = DataLoader(
             val_subset,
             batch_size=self.config.training.batch_size,

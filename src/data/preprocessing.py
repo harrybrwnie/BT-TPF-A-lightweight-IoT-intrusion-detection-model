@@ -170,7 +170,13 @@ class SiamesePairDataset(Dataset):
     Reference: Section 3.1 of the paper
     """
     
-    def __init__(self, features: np.ndarray, labels: np.ndarray, num_pairs: Optional[int] = None):
+    def __init__(
+        self,
+        features: np.ndarray,
+        labels: np.ndarray,
+        num_pairs: Optional[int] = None,
+        balance_by_class: bool = True
+    ):
         """
         Args:
             features: Feature array
@@ -180,6 +186,7 @@ class SiamesePairDataset(Dataset):
         self.features = torch.tensor(features, dtype=torch.float32)
         self.labels = labels
         self.num_pairs = num_pairs if num_pairs else len(features)
+        self.balance_by_class = balance_by_class
         
         # Group indices by class
         self.class_indices = {}
@@ -203,9 +210,14 @@ class SiamesePairDataset(Dataset):
         # Randomly decide if we want a positive (same class) or negative pair
         is_same_class = random.random() > 0.5
         
-        # Select first sample randomly
-        idx1 = random.randint(0, len(self.features) - 1)
-        label1 = self.labels[idx1]
+        # Imbalance-aware anchor sampling:
+        # If enabled, sample class first so minority classes are seen more often.
+        if self.balance_by_class:
+            label1 = random.choice(self.unique_labels)
+            idx1 = random.choice(self.class_indices[label1])
+        else:
+            idx1 = random.randint(0, len(self.features) - 1)
+            label1 = self.labels[idx1]
         
         if is_same_class:
             # Select second sample from same class

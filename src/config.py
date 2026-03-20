@@ -105,6 +105,10 @@ class TrainingConfig:
     # Knowledge distillation
     initial_replacement_rate: float = 0.5
     use_gradient_optimization: bool = True
+    
+    # Imbalance handling
+    use_weighted_sampler: bool = True
+    weighted_sampler_power: float = 1.0
 
 
 @dataclass
@@ -120,6 +124,9 @@ class DataConfig:
     test_size: float = 0.25
     random_state: int = 42
     encoded_dim: int = 36  # After Siamese encoding
+    
+    # Siamese pair sampling strategy
+    siamese_balance_by_class: bool = True
 
 
 @dataclass
